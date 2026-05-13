@@ -11,11 +11,11 @@ Adaptations Streamlit uniquement :
   - Sortie: download_button (bytes en memoire)
 
 Structure PDF attendue (20 pages) :
-  Pages  5-23 : tableaux Enseignement pratique  (3 seances/page)
-  Page     24 : validation EP
-  Pages 25-27 : tableaux Organiser l'activite   (3 seances/page)
-  Page     28 : validation M2
-  Page     29 : tableau Organiser un cursus     (2 sous-tableaux)
+  Pages  5-8  : tableaux Enseignement pratique  (3 seances/page)
+  Page      9 : validation EP
+  Pages 10-12 : tableaux Organiser l'activite   (3 seances/page)
+  Page     13 : validation M2
+  Page     14 : tableau Organiser un cursus     (2 sous-tableaux)
   Pages 15-20 : attestations, tuteur, module complementaire, contacts
 """
 
@@ -166,6 +166,7 @@ def read_excel(file_bytes):
     m3 = []
     for i in range(59, 61):
         r = row(i)
+        if r is None or all(v is None for v in r): continue
         formateur = s(r[3]) or s(r[10])
         m3.append({
             'date': fmt(r[0]), 'theme': s(r[2]), 'formateur': formateur,
@@ -187,7 +188,10 @@ def build_output_pdf(input_path, n_ep_needed):
 
     Retourne (pdf_bytes, extra_ep).
     """
-    reader = PdfReader(input_path)
+    if isinstance(input_path, (bytes, bytearray)):
+        reader = PdfReader(io.BytesIO(input_path))
+    else:
+        reader = PdfReader(input_path)
     total  = len(reader.pages)
     writer = PdfWriter()
 
@@ -202,22 +206,22 @@ def build_output_pdf(input_path, n_ep_needed):
     for pg in range(1, EP_FIRST): copy(pg)
 
     # Toutes les pages EP originales (inchangees)
-    for pg in range(EP_FIRST, EP_VALID): copy(pg)   # 5-23
+    for pg in range(EP_FIRST, EP_VALID): copy(pg)   # 5-8
 
     # Pages EP supplementaires (copies de EP_FIRST)
     for _ in range(extra_ep): copy(EP_FIRST)
 
     # Validation EP
-    copy(EP_VALID)                                   # 24
+    copy(EP_VALID)                                   # 9
 
     # Pages M2 originales
-    for pg in range(M2_FIRST, M2_VALID): copy(pg)   # 25-27
+    for pg in range(M2_FIRST, M2_VALID): copy(pg)   # 10-12
 
     # Validation M2
-    copy(M2_VALID)                                   # 28
+    copy(M2_VALID)                                   # 13
 
     # Page M3
-    copy(M3_PAGE)                                    # 29
+    copy(M3_PAGE)                                    # 14
 
     # Pages restantes (attestations, contacts...)
     for pg in range(REMAINING_START, total + 1): copy(pg)
@@ -269,7 +273,7 @@ def build_fields(m1, m2, m3, extra_ep=0):
         by0, by1 = vcenter(cell_y0, cell_y1, font_size, n_lines=1)
         add(pg, desc, [bx0, by0, bx1, by1], text, font_size, h_align='center')
 
-    # ---- Module 1 : pages 5-23, 3 séances par page --------
+    # ---- Module 1 : pages 5+, 3 séances par page (EP_FIRST = 5) ----
     M1C = [(207, 357), (357, 506), (506, 656)]
     M1R = {
         'date':        (322, 359), 'formateur':   (359, 398),
@@ -424,8 +428,6 @@ def fill_pdf(pdf_source, fields_data):
     buf.seek(0)
     return buf.getvalue(), count
 
-
-# ------ Point d'entrée -------------------------------------
 
 # ------ Pipeline principal ---------------------------------
 
