@@ -136,44 +136,49 @@ def read_excel(file_bytes):
 
 def build_output_pdf(pdf_bytes, n_ep_needed, n_m2_needed):
     """
-    Construit un PDF avec exactement n_ep_needed pages tableau EP
-    et n_m2_needed pages tableau M2. Duplique la page modèle si
-    le nombre dépasse ce que contient le PDF de base.
+    Construit un PDF en conservant TOUTES les pages originales de chaque
+    module, puis en ajoutant des pages supplémentaires (duplicatas du
+    modèle) uniquement si le nombre de séances dépasse la capacité de base.
 
-    Retourne (pdf_bytes, page_map) où page_map contient les numéros
-    de page réels (1-indexés) dans le PDF de sortie.
+    Les positions M2 et M3 dans la sortie ne décalent que du nombre de
+    pages réellement ajoutées — pas des pages originales non utilisées.
+
+    Retourne (pdf_bytes, page_map) : numéros 1-indexés dans le PDF de sortie.
     """
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    total  = len(reader.pages)
-    writer = PdfWriter()
+    reader  = PdfReader(io.BytesIO(pdf_bytes))
+    total   = len(reader.pages)
+    writer  = PdfWriter()
 
-    def copy(page_1indexed):
-        idx = page_1indexed - 1
+    extra_ep = max(0, n_ep_needed - EP_PAGES_IN_PDF)
+    extra_m2 = max(0, n_m2_needed - M2_PAGES_IN_PDF)
+
+    def copy(pg):
+        idx = pg - 1
         if 0 <= idx < total:
             writer.add_page(reader.pages[idx])
 
-    # Pages fixes : 1-4
-    for pg in range(1, 5):
+    # Pages intro (1 … EP_FIRST-1)
+    for pg in range(1, EP_FIRST):
         copy(pg)
 
-    # Pages tableau EP
-    for i in range(n_ep_needed):
-        src = EP_FIRST + i
-        if i < EP_PAGES_IN_PDF:
-            copy(src)       # page originale
-        else:
-            copy(EP_FIRST)  # duplication page modèle EP (page 5)
+    # Toutes les pages EP originales
+    for pg in range(EP_FIRST, EP_VALID):
+        copy(pg)
+
+    # Pages EP supplémentaires (duplicatas du modèle = page EP_FIRST)
+    for _ in range(extra_ep):
+        copy(EP_FIRST)
 
     # Validation EP
     copy(EP_VALID)
 
-    # Pages tableau M2
-    for i in range(n_m2_needed):
-        src = M2_FIRST + i
-        if i < M2_PAGES_IN_PDF:
-            copy(src)
-        else:
-            copy(M2_FIRST)  # duplication page modèle M2 (page 25)
+    # Toutes les pages M2 originales
+    for pg in range(M2_FIRST, M2_VALID):
+        copy(pg)
+
+    # Pages M2 supplémentaires (duplicatas du modèle = page M2_FIRST)
+    for _ in range(extra_m2):
+        copy(M2_FIRST)
 
     # Validation M2
     copy(M2_VALID)
@@ -181,26 +186,24 @@ def build_output_pdf(pdf_bytes, n_ep_needed, n_m2_needed):
     # Page M3
     copy(M3_PAGE)
 
-    # Pages restantes (attestations, tuteur, module complémentaire)
+    # Pages restantes
     for pg in range(REMAINING_START, total + 1):
         copy(pg)
 
-    # Calcul du page_map dans le PDF de sortie
-    ep_first_out = 5
-    ep_valid_out = ep_first_out + n_ep_needed
-    m2_first_out = ep_valid_out + 1
-    m2_valid_out = m2_first_out + n_m2_needed
-    m3_out       = m2_valid_out + 1
+    # page_map : M2 et M3 décalent uniquement des pages ajoutées
+    # (les pages originales conservent leurs positions relatives)
+    return buf_write(writer), {
+        'ep_first': EP_FIRST,
+        'm2_first': M2_FIRST + extra_ep,
+        'm3':       M3_PAGE  + extra_ep + extra_m2,
+    }
 
+
+def buf_write(writer):
     buf = io.BytesIO()
     writer.write(buf)
     buf.seek(0)
-
-    return buf.getvalue(), {
-        'ep_first': ep_first_out,
-        'm2_first': m2_first_out,
-        'm3':       m3_out,
-    }
+    return buf.getvalue()
 
 
 # ------ Construction des champs ----------------------------
