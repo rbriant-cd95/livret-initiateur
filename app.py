@@ -1,22 +1,39 @@
 #!/usr/bin/env python3
 """
-Livret Pedagogique Initiateur FFESSM — Application web Streamlit
-=================================================================
-Deploiement : Streamlit Cloud — https://streamlit.io/cloud
+Remplissage automatique du Livret Pédagogique Initiateur FFESSM
+================================================================
+Pré-requis :
+    pip install openpyxl pypdf
 
-Logique identique au script local remplir_livret_initiateur.py.
-Adaptations Streamlit uniquement :
-  - Excel : upload file_uploader (bytes)
-  - PDF   : bundle dans le depot (lu via open)
-  - Sortie: download_button (bytes en memoire)
+Usage :
+    python remplir_livret_initiateur_v4.py
 
-Structure PDF attendue (20 pages) :
-  Pages  5-8  : tableaux Enseignement pratique  (3 seances/page)
-  Page      9 : validation EP
-  Pages 10-12 : tableaux Organiser l'activite   (3 seances/page)
-  Page     13 : validation M2
-  Page     14 : tableau Organiser un cursus     (2 sous-tableaux)
-  Pages 15-20 : attestations, tuteur, module complementaire, contacts
+Adapter les chemins et le facteur d'échelle (section CONFIGURATION).
+
+Centrage des codes A / ECA / NT :
+  - Horizontal : centrage géométrique (bbox de la largeur exacte du texte,
+                 positionnée au centre de la colonne). Indépendant du lecteur PDF.
+  - Vertical   : bbox réduite à la hauteur d'une ligne, positionnée au centre
+                 de la cellule.
+Les autres champs (date, formateur, thème, niveau) ne sont pas modifiés.
+
+Structure Excel attendue :
+  Feuil1
+  - Lignes 3-43  : Module 1 — Enseignement pratique
+      Col A=Date, B=Niveau, C=Thème, D=Formateur, E=Objectifs, F=Positionnement,
+      G=Justification, H=Stratégie, I=Accueil, J=Animer, K=Mettre en œuvre,
+      L=Réaliser éval., O=Évaluateur(s)
+  - Lignes 50-55 : Module 2 — Organiser l'activité
+      Col A=Date, C=Thème, D=Formateur, E=Accueillir, F=Organiser,
+      G=Sécuriser, H=Réagir, K=Évaluateur(s)
+  - Lignes 59-60 : Module 3 — Organiser un cursus
+      Col A=Date, C=Thème, D=Formateur, E=Identifier, F=Planifier,
+      G=Logistique, H=Moyens, K=Évaluateur(s)
+
+Structure PDF attendue (35 pages) :
+  Pages  5-23 : tableaux Enseignement pratique (3 séances / page)
+  Pages 25-27 : tableaux Organiser l'activité  (3 séances / page)
+  Page     29 : tableau Organiser un cursus   (2 sous-tableaux)
 """
 
 import io
@@ -30,14 +47,10 @@ from pypdf.generic import NameObject, NumberObject
 
 
 # ============================================================
-#  CONFIGURATION — à adapter selon vos chemins de fichiers
+#  PARAMÈTRES
 # ============================================================
-PDF_FILE = "Livret+pédagogique+Initiateur.pdf"   # PDF bundlé dans le dépôt GitHub
-
-# Facteur d'échelle pour la taille des polices.
-# 1.0 = taille d'origine, 1.2 = +20%, 1.4 = +40%
-# Au-delà de 1.4, risque de débordement sur les noms/thèmes longs.
-SCALE = 1.3
+PDF_FILE = "Livret+pédagogique+Initiateur.pdf"   # PDF bundlé dans le dépôt
+SCALE    = 1.3
 # ============================================================
 
 
@@ -60,16 +73,77 @@ CHAR_PADDING_PX      = 14    # marge interne FreeText (~6pt chaque côté)
 Q_MAP = {'left': 0, 'center': 1, 'right': 2}
 
 
-# ------ Structure du PDF (pages 1-indexées) ----------------
-# Adaptez si vous utilisez une version du livret avec un nombre différent de pages.
-EP_FIRST          =  5    # première page tableau EP
-EP_PAGES_IN_PDF   =  4    # nombre de pages EP dans le PDF de base (pages 5-8)
-EP_VALID          =  9    # page de validation EP
-M2_FIRST          = 10    # première page tableau M2
-M2_PAGES_IN_PDF   =  3    # nombre de pages M2 dans le PDF de base (pages 10-12)
-M2_VALID          = 13    # page de validation M2
-M3_PAGE           = 14    # page tableau M3
-REMAINING_START   = 15    # première page "restante" (attestations, contacts…)
+# ------ Structure du PDF — détectée automatiquement au démarrage ------
+# Ces valeurs sont écrasées par detect_pdf_structure() à l'exécution.
+EP_FIRST        = 5
+EP_PAGES_IN_PDF = 4
+EP_VALID        = 9
+M2_FIRST        = 10
+M2_PAGES_IN_PDF = 3
+M2_VALID        = 13
+M3_PAGE         = 14
+REMAINING_START = 15
+
+# ------ Détection automatique de la structure PDF ----------
+
+def detect_pdf_structure(pdf_bytes):
+    """
+    Lit le texte de chaque page du PDF pour identifier automatiquement
+    les numéros de pages EP, M2 et M3 — indépendamment du nombre total de pages.
+    Met à jour les constantes globales en conséquence.
+    """
+    global EP_FIRST, EP_PAGES_IN_PDF, EP_VALID
+    global M2_FIRST, M2_PAGES_IN_PDF, M2_VALID
+    global M3_PAGE, REMAINING_START
+
+    reader    = PdfReader(io.BytesIO(pdf_bytes))
+    ep_tables, m2_tables, m3_tables = [], [], []
+    ep_valid = m2_valid = m3_valid = None
+
+    for i, page in enumerate(reader.pages):
+        txt = (page.extract_text() or "").upper()
+        pg  = i + 1
+
+        if "ENSEIGNEMENT PRATIQUE" in txt:
+            if "VALIDATION DU MODULE" in txt:
+                ep_valid = pg
+            else:
+                ep_tables.append(pg)
+
+        elif "ORGANISER ET" in txt and "CURSUS" not in txt:
+            if "VALIDATION DU MODULE" in txt:
+                m2_valid = pg
+            else:
+                m2_tables.append(pg)
+
+        elif "ORGANISER UN CURSUS" in txt or ("PLANIFIER" in txt and "LOGISTIQUE" in txt):
+            if "VALIDATION DU MODULE" in txt:
+                m3_valid = pg
+            else:
+                m3_tables.append(pg)
+
+    if not ep_tables:
+        raise ValueError("Impossible de détecter les pages EP dans le PDF.")
+    if not m2_tables:
+        raise ValueError("Impossible de détecter les pages M2 dans le PDF.")
+    if not m3_tables:
+        raise ValueError("Impossible de détecter les pages M3 dans le PDF.")
+
+    EP_FIRST        = min(ep_tables)
+    EP_PAGES_IN_PDF = len(ep_tables)
+    EP_VALID        = ep_valid or (max(ep_tables) + 1)
+    M2_FIRST        = min(m2_tables)
+    M2_PAGES_IN_PDF = len(m2_tables)
+    M2_VALID        = m2_valid or (max(m2_tables) + 1)
+    M3_PAGE         = min(m3_tables)
+    REMAINING_START = (m3_valid or M3_PAGE) + 1
+
+    return {
+        'EP': f"pages {EP_FIRST}–{max(ep_tables)} ({EP_PAGES_IN_PDF} pages)",
+        'M2': f"pages {M2_FIRST}–{max(m2_tables)} ({M2_PAGES_IN_PDF} pages)",
+        'M3': f"page {M3_PAGE}",
+    }
+
 
 # ------ Utilitaires ----------------------------------------
 
@@ -166,7 +240,6 @@ def read_excel(file_bytes):
     m3 = []
     for i in range(59, 61):
         r = row(i)
-        if r is None or all(v is None for v in r): continue
         formateur = s(r[3]) or s(r[10])
         m3.append({
             'date': fmt(r[0]), 'theme': s(r[2]), 'formateur': formateur,
@@ -206,22 +279,22 @@ def build_output_pdf(input_path, n_ep_needed):
     for pg in range(1, EP_FIRST): copy(pg)
 
     # Toutes les pages EP originales (inchangees)
-    for pg in range(EP_FIRST, EP_VALID): copy(pg)   # 5-8
+    for pg in range(EP_FIRST, EP_VALID): copy(pg)   # 5-23
 
     # Pages EP supplementaires (copies de EP_FIRST)
     for _ in range(extra_ep): copy(EP_FIRST)
 
     # Validation EP
-    copy(EP_VALID)                                   # 9
+    copy(EP_VALID)                                   # 24
 
     # Pages M2 originales
-    for pg in range(M2_FIRST, M2_VALID): copy(pg)   # 10-12
+    for pg in range(M2_FIRST, M2_VALID): copy(pg)   # 25-27
 
     # Validation M2
-    copy(M2_VALID)                                   # 13
+    copy(M2_VALID)                                   # 28
 
     # Page M3
-    copy(M3_PAGE)                                    # 14
+    copy(M3_PAGE)                                    # 29
 
     # Pages restantes (attestations, contacts...)
     for pg in range(REMAINING_START, total + 1): copy(pg)
@@ -273,7 +346,7 @@ def build_fields(m1, m2, m3, extra_ep=0):
         by0, by1 = vcenter(cell_y0, cell_y1, font_size, n_lines=1)
         add(pg, desc, [bx0, by0, bx1, by1], text, font_size, h_align='center')
 
-    # ---- Module 1 : pages 5+, 3 séances par page (EP_FIRST = 5) ----
+    # ---- Module 1 : pages 5-23, 3 séances par page --------
     M1C = [(207, 357), (357, 506), (506, 656)]
     M1R = {
         'date':        (322, 359), 'formateur':   (359, 398),
@@ -376,7 +449,7 @@ def build_fields(m1, m2, m3, extra_ep=0):
 # ------ Remplissage PDF ------------------------------------
 
 def fill_pdf(pdf_source, fields_data):
-    """Annote le PDF, retourne (bytes_rempli, nb_annotations)."""
+    """Annote le PDF et retourne (bytes_rempli, nb_annotations)."""
     if isinstance(pdf_source, (bytes, bytearray)):
         reader = PdfReader(io.BytesIO(pdf_source))
     else:
@@ -435,7 +508,10 @@ def generate(excel_bytes, pdf_bytes):
     m1, m2, m3 = read_excel(excel_bytes)
     n_ep     = max(1, math.ceil(len(m1) / 3))
     extra_ep = max(0, n_ep - EP_PAGES_IN_PDF)
-    pdf_source, _ = build_output_pdf(pdf_bytes, n_ep) if extra_ep > 0 else (pdf_bytes, 0)
+    if extra_ep > 0:
+        pdf_source, _ = build_output_pdf(pdf_bytes, n_ep)
+    else:
+        pdf_source = pdf_bytes
     fields_data    = build_fields(m1, m2, m3, extra_ep)
     pdf_out, count = fill_pdf(pdf_source, fields_data)
     return pdf_out, count, len(m1), len(m2), len(m3), extra_ep
@@ -458,53 +534,33 @@ if excel_file:
     if st.button("⚙️ Générer le livret rempli", type="primary", use_container_width=True):
         with st.spinner("Traitement en cours…"):
             try:
+                # Charger le PDF bundlé
                 try:
-                    with open(PDF_FILE, "rb") as f:
-                        pdf_bytes = f.read()
+                    with open(PDF_FILE, "rb") as fh:
+                        pdf_bytes = fh.read()
                 except FileNotFoundError:
-                    st.error(f"❌ Fichier PDF introuvable dans le dépôt : {PDF_FILE}\n\n"
-                             "Vérifiez que le fichier a bien été uploadé sur GitHub.")
+                    st.error(f"❌ PDF introuvable : {PDF_FILE}\n\n"
+                             "Vérifiez que le fichier est bien uploadé sur GitHub.")
                     st.stop()
 
-                n_pages = len(PdfReader(io.BytesIO(pdf_bytes)).pages)
-                if n_pages != 20:
-                    st.error(f"❌ Le PDF du dépôt a {n_pages} pages — attendu : 20.\n\n"
-                             f"Fichier attendu : {PDF_FILE}")
+                # Détecter la structure du PDF automatiquement
+                try:
+                    struct = detect_pdf_structure(pdf_bytes)
+                    st.info(
+                        f"📄 Structure détectée — "
+                        f"EP : {struct['EP']}  |  "
+                        f"M2 : {struct['M2']}  |  "
+                        f"M3 : {struct['M3']}"
+                    )
+                except ValueError as ve:
+                    st.error(f"❌ Erreur de détection PDF : {ve}")
                     st.stop()
 
                 excel_bytes = excel_file.read()
-
-                # --- Diagnostic : lecture seule pour inspecter les données ---
-                m1_d, m2_d, m3_d = read_excel(excel_bytes)
-                n_ep_d     = max(1, math.ceil(len(m1_d) / 3))
-                extra_ep_d = max(0, n_ep_d - EP_PAGES_IN_PDF)
-                fd = build_fields(m1_d, m2_d, m3_d, extra_ep_d)
-                from collections import Counter
-                page_count = Counter(f["page_number"] for f in fd["form_fields"])
-
-                with st.expander("🔍 Diagnostic — affectation des pages (cliquez pour vérifier)", expanded=True):
-                    st.markdown(f"**Sessions lues :** {len(m1_d)} EP · {len(m2_d)} M2 · {len(m3_d)} M3")
-                    st.markdown(f"**extra_ep :** {extra_ep_d}  |  **PDF de sortie :** {n_pages + extra_ep_d} pages")
-                    st.markdown("**Annotations par page :**")
-                    ep_pages  = list(range(5, 5 + n_ep_d))
-                    m2_start  = M2_FIRST + extra_ep_d
-                    m3_pg     = M3_PAGE  + extra_ep_d
-                    for pg in sorted(page_count):
-                        n = page_count[pg]
-                        if pg in ep_pages:
-                            tag = "📘 EP"
-                        elif m2_start <= pg < m2_start + math.ceil(max(len(m2_d),1) / 3):
-                            tag = "📗 M2"
-                        elif pg == m3_pg:
-                            tag = "📙 M3"
-                        else:
-                            tag = "❓ INCONNU"
-                        st.markdown(f"  - Page **{pg}** → {n} annotations  {tag}")
-
-                # --- Génération réelle ---
                 pdf_out, count, nm1, nm2, nm3, extra_ep = generate(excel_bytes, pdf_bytes)
 
-                msg = f"✅ Livret généré — {count} annotations  ({nm1} séances EP, {nm2} M2, {nm3} M3)"
+                msg = (f"✅ Livret généré — {count} annotations  "
+                       f"({nm1} séances EP, {nm2} M2, {nm3} M3)")
                 if extra_ep:
                     msg += f"\n\n📄 {extra_ep} page(s) EP supplémentaire(s) ajoutée(s)"
                 st.success(msg)
