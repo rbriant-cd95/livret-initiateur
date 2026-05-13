@@ -24,7 +24,8 @@ from pypdf.generic import NameObject, NumberObject
 # ============================================================
 #  PARAMÈTRES
 # ============================================================
-SCALE = 1.3   # Facteur d'échelle des polices (1.0 = origine)
+SCALE    = 1.3
+PDF_FILE = "Livret+pédagogique+Initiateur.pdf"   # PDF bundlé dans le dépôt
 # ============================================================
 
 
@@ -39,13 +40,13 @@ Q_MAP        = {'left': 0, 'center': 1}
 
 # Structure du PDF de base (numéros 1-indexés)
 EP_FIRST          = 5
-EP_PAGES_IN_PDF   = 19   # pages 5-23
-EP_VALID          = 24
-M2_FIRST          = 25
-M2_PAGES_IN_PDF   = 3    # pages 25-27
-M2_VALID          = 28
-M3_PAGE           = 29
-REMAINING_START   = 30
+EP_PAGES_IN_PDF   = 4    # pages 5-8
+EP_VALID          = 9
+M2_FIRST          = 10
+M2_PAGES_IN_PDF   = 3    # pages 10-12
+M2_VALID          = 13
+M3_PAGE           = 14
+REMAINING_START   = 15
 
 
 # ------ Utilitaires ----------------------------------------
@@ -370,29 +371,35 @@ st.title("🤿 Livret Pédagogique Initiateur FFESSM")
 st.markdown("Remplissage automatique du livret à partir du fichier Excel de séances.")
 st.divider()
 
-col1, col2 = st.columns(2)
-with col1:
-    excel_file = st.file_uploader("📊 Fichier Excel des séances", type=["xlsx"],
-                                  help="Seances_initiateur.xlsx")
-with col2:
-    pdf_file = st.file_uploader("📄 Livret PDF vierge", type=["pdf"],
-                                help="Livret_pédagogique_Initiateur__1_.pdf (35 pages)")
+excel_file = st.file_uploader("📊 Fichier Excel des séances", type=["xlsx"],
+                              help="Seances_initiateur.xlsx")
 
 st.divider()
 
-if excel_file and pdf_file:
+if excel_file:
     if st.button("⚙️ Générer le livret rempli", type="primary", use_container_width=True):
         with st.spinner("Traitement en cours…"):
             try:
-                excel_bytes = excel_file.read()
-                pdf_bytes   = pdf_file.read()
-
-                n_pages = len(PdfReader(io.BytesIO(pdf_bytes)).pages)
-                if n_pages < 29:
-                    st.error(f"❌ Le PDF uploadé n'a que {n_pages} pages. "
-                             "Il faut uploader la version complète (35 pages).")
+                # Chargement du PDF bundlé dans le dépôt
+                try:
+                    with open(PDF_FILE, "rb") as f:
+                        pdf_bytes = f.read()
+                except FileNotFoundError:
+                    st.error(f"❌ Fichier PDF introuvable dans le dépôt : {PDF_FILE}\n\n"
+                             "Vérifiez que le fichier a bien été uploadé sur GitHub.")
                     st.stop()
 
+                # Vérification version PDF
+                n_pages = len(PdfReader(io.BytesIO(pdf_bytes)).pages)
+                if n_pages < 14:
+                    st.error(
+                        f"❌ Le PDF du dépôt n'a que {n_pages} pages.\n\n"
+                        f"Il faut déposer la version complète (35 pages) sur GitHub.\n"
+                        f"Fichier attendu : {PDF_FILE}"
+                    )
+                    st.stop()
+
+                excel_bytes = excel_file.read()
                 pdf_out, count, nm1, nm2, nm3, n_ep, n_m2 = generate(excel_bytes, pdf_bytes)
 
                 extra_ep = max(0, n_ep - EP_PAGES_IN_PDF)
@@ -415,7 +422,7 @@ if excel_file and pdf_file:
                 st.error(f"❌ Erreur : {e}")
                 st.exception(e)
 else:
-    st.info("👆 Uploadez les deux fichiers pour activer la génération.")
+    st.info("👆 Uploadez votre fichier Excel pour activer la génération.")
 
 st.divider()
 st.caption("FFESSM Codep 95 — Script généré avec Claude (Anthropic)")
