@@ -40,13 +40,13 @@ Q_MAP        = {'left': 0, 'center': 1}
 
 # Structure du PDF de base (numéros 1-indexés)
 EP_FIRST          = 5
-EP_PAGES_IN_PDF   = 4    # pages 5-8
-EP_VALID          = 9
-M2_FIRST          = 10
-M2_PAGES_IN_PDF   = 3    # pages 10-12
-M2_VALID          = 13
-M3_PAGE           = 14
-REMAINING_START   = 15
+EP_PAGES_IN_PDF   = 19   # pages 5-23
+EP_VALID          = 24
+M2_FIRST          = 25
+M2_PAGES_IN_PDF   = 3    # pages 25-27
+M2_VALID          = 28
+M3_PAGE           = 29
+REMAINING_START   = 30
 
 
 # ------ Utilitaires ----------------------------------------
@@ -387,16 +387,6 @@ if excel_file:
                 except FileNotFoundError:
                     st.error(f"❌ Fichier PDF introuvable dans le dépôt : {PDF_FILE}\n\n"
                              "Vérifiez que le fichier a bien été uploadé sur GitHub.")
-                    st.stop()
-
-                # Vérification version PDF
-                n_pages = len(PdfReader(io.BytesIO(pdf_bytes)).pages)
-                if n_pages < 14:
-                    st.error(
-                        f"❌ Le PDF du dépôt n'a que {n_pages} pages.\n\n"
-                        f"Il faut déposer la version complète (35 pages) sur GitHub.\n"
-                        f"Fichier attendu : {PDF_FILE}"
-                    )
                     st.stop()
 
                 excel_bytes = excel_file.read()
