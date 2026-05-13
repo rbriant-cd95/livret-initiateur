@@ -9,6 +9,14 @@ Fonctionnalités :
   - Duplication automatique des pages tableau si le nombre de séances
     dépasse la capacité du PDF de base
   - Téléchargement du PDF rempli
+
+Corrections v5 :
+  - BUG #1 : check version PDF corrigé (== 20, pas < 14)
+  - BUG #2 : commentaire constants corrigé (20 pages, pas 35)
+  - BUG #3 : lecture M3 Excel protégée contre les lignes vides
+  - BUG #4 : FreeText pypdf remplacé par overlay reportlab
+               → annotations visibles dans TOUS les viewers PDF
+               (Preview macOS/iOS, Chrome, Firefox, Acrobat…)
 """
 
 import io
@@ -17,8 +25,7 @@ import streamlit as st
 import openpyxl
 from datetime import datetime
 from pypdf import PdfReader, PdfWriter
-from pypdf.annotations import FreeText
-from pypdf.generic import NameObject, NumberObject
+from reportlab.pdfgen import canvas as rlcanvas
 
 
 # ============================================================
@@ -29,14 +36,13 @@ PDF_FILE = "Livret+pédagogique+Initiateur.pdf"   # PDF bundlé dans le dépôt
 # ============================================================
 
 
-# ------ Constantes PDF (PDF de base à 35 pages) ------------
+# ------ Constantes PDF (PDF de base à 20 pages) ------------  ← BUG #2 corrigé
 PDF_H        = 842.00
 IMG_W        = 707
 IMG_H        = 1000
 PX_PER_PT    = IMG_H / PDF_H
 CHAR_WIDTH   = 0.90
 CHAR_PADDING = 14
-Q_MAP        = {'left': 0, 'center': 1}
 
 # Structure du PDF de base (numéros 1-indexés)
 EP_FIRST          = 5
@@ -119,9 +125,12 @@ def read_excel(file_bytes):
             'securiser': s(r[6]), 'reagir':    s(r[7]),
         })
 
+    # BUG #3 corrigé : garde contre les lignes entièrement vides
     m3 = []
     for i in range(59, 61):
         r = row(i)
+        if r is None or all(v is None for v in r):
+            continue
         m3.append({
             'date': fmt(r[0]), 'theme': s(r[2]),
             'formateur': s(r[3]) or s(r[10]),
@@ -137,11 +146,8 @@ def read_excel(file_bytes):
 def build_output_pdf(pdf_bytes, n_ep_needed, n_m2_needed):
     """
     Construit un PDF en conservant TOUTES les pages originales de chaque
-    module, puis en ajoutant des pages supplémentaires (duplicatas du
-    modèle) uniquement si le nombre de séances dépasse la capacité de base.
-
-    Les positions M2 et M3 dans la sortie ne décalent que du nombre de
-    pages réellement ajoutées — pas des pages originales non utilisées.
+    module, puis en ajoutant des pages supplémentaires uniquement si
+    nécessaire.
 
     Retourne (pdf_bytes, page_map) : numéros 1-indexés dans le PDF de sortie.
     """
@@ -190,8 +196,6 @@ def build_output_pdf(pdf_bytes, n_ep_needed, n_m2_needed):
     for pg in range(REMAINING_START, total + 1):
         copy(pg)
 
-    # page_map : M2 et M3 décalent uniquement des pages ajoutées
-    # (les pages originales conservent leurs positions relatives)
     return buf_write(writer), {
         'ep_first': EP_FIRST,
         'm2_first': M2_FIRST + extra_ep,
@@ -215,10 +219,8 @@ def build_fields(m1, m2, m3, page_map):
     def add(pg, desc, bbox, text, font_size, h_align='left'):
         if not text: return
         lc[0] += 1
-        lx = 40 + (lc[0] % 5) * 2
         fields.append({
-            "page_number": pg, "description": desc, "field_label": desc,
-            "label_bounding_box": [lx, 10 + lc[0], lx + 1, 11 + lc[0]],
+            "page_number": pg, "description": desc,
             "entry_bounding_box": bbox,
             "entry_text": {"text": str(text), "font_size": font_size, "h_align": h_align},
         })
@@ -303,48 +305,90 @@ def build_fields(m1, m2, m3, page_map):
 
     pages_used = sorted(set(f['page_number'] for f in fields))
     return {
-        "pages": [{"page_number": pg,"image_width":IMG_W,"image_height":IMG_H}
+        "pages": [{"page_number": pg, "image_width": IMG_W, "image_height": IMG_H}
                   for pg in pages_used],
         "form_fields": fields,
     }
 
 
-# ------ Annotation du PDF ----------------------------------
+# ------ Annotation du PDF (BUG #4 corrigé) -----------------
 
 def annotate_pdf(pdf_bytes, fields_data):
+    """
+    Overlay reportlab fusionné dans le flux de contenu de chaque page.
+
+    Avantage vs FreeText pypdf :
+      - Rendu garanti dans tous les viewers (Preview, Chrome, Firefox, Acrobat…)
+      - Texte extractable et indexable
+      - Clipping automatique au rectangle de la cellule
+    """
     reader = PdfReader(io.BytesIO(pdf_bytes))
     writer = PdfWriter()
     writer.append(reader)
 
-    pdf_dims = {i+1:[float(p.mediabox.width),float(p.mediabox.height)]
-                for i,p in enumerate(reader.pages)}
-    count = 0
+    pdf_dims = {i+1: [float(p.mediabox.width), float(p.mediabox.height)]
+                for i, p in enumerate(reader.pages)}
 
+    # Regrouper les champs par page
+    page_fields: dict[int, list] = {}
     for f in fields_data["form_fields"]:
         pg = f["page_number"]
-        pi = next(p for p in fields_data["pages"] if p["page_number"] == pg)
+        text = f.get("entry_text", {}).get("text", "")
+        if text:
+            page_fields.setdefault(pg, []).append(f)
+
+    count = 0
+    for pg, fields in page_fields.items():
         pdf_w, pdf_h = pdf_dims[pg]
-        iw, ih = pi["image_width"], pi["image_height"]
-        bb = f["entry_bounding_box"]
+        xs = pdf_w / IMG_W
+        ys = pdf_h / IMG_H
 
-        xs = pdf_w/iw; ys = pdf_h/ih
-        left  = bb[0]*xs; right  = bb[2]*xs
-        top   = pdf_h - bb[1]*ys; bottom = pdf_h - bb[3]*ys
+        # Créer une page overlay transparente avec reportlab
+        page_buf = io.BytesIO()
+        c = rlcanvas.Canvas(page_buf, pagesize=(pdf_w, pdf_h))
 
-        et = f.get("entry_text",{}); text = et.get("text","")
-        if not text: continue
+        for f in fields:
+            bb = f["entry_bounding_box"]
+            et = f.get("entry_text", {})
+            text = str(et.get("text", ""))
+            if not text:
+                continue
 
-        ann = FreeText(
-            text=text, rect=(left,bottom,right,top),
-            font=et.get("font","Arial"),
-            font_size=f"{et.get('font_size',8)}pt",
-            font_color=et.get("font_color","000000"),
-            border_color=None, background_color=None,
-        )
-        ann[NameObject("/Q")] = NumberObject(Q_MAP.get(et.get("h_align","left"),0))
-        ann[NameObject("/F")] = NumberObject(4)
-        writer.add_annotation(page_number=pg-1, annotation=ann)
-        count += 1
+            font_size = et.get("font_size", 8)
+            h_align   = et.get("h_align", "left")
+
+            # Convertir coordonnées image → PDF (Y inversé)
+            x0    = bb[0] * xs
+            x1    = bb[2] * xs
+            y_top = pdf_h - bb[1] * ys   # haut de la bbox en coords PDF (Y=0 en bas)
+            y_bot = pdf_h - bb[3] * ys   # bas  de la bbox en coords PDF
+
+            # Clipping au rectangle de la cellule
+            c.saveState()
+            clip = c.beginPath()
+            clip.rect(x0, y_bot, x1 - x0, y_top - y_bot)
+            c.clipPath(clip, fill=0, stroke=0)
+
+            # Centrage vertical (baseline ≈ centre − correction descente)
+            text_y = (y_top + y_bot) / 2 - font_size * 0.30
+
+            c.setFont("Helvetica", font_size)
+            c.setFillColorRGB(0, 0, 0)
+
+            if h_align == 'center':
+                c.drawCentredString((x0 + x1) / 2, text_y, text)
+            else:
+                c.drawString(x0 + 2, text_y, text)
+
+            c.restoreState()
+            count += 1
+
+        c.save()
+        page_buf.seek(0)
+
+        # Fusionner l'overlay sur la page cible
+        overlay_page = PdfReader(page_buf).pages[0]
+        writer.pages[pg - 1].merge_page(overlay_page)
 
     buf = io.BytesIO()
     writer.write(buf)
@@ -392,12 +436,13 @@ if excel_file:
                              "Vérifiez que le fichier a bien été uploadé sur GitHub.")
                     st.stop()
 
-                # Vérification version PDF
+                # BUG #1 corrigé : vérification stricte du nombre de pages
                 n_pages = len(PdfReader(io.BytesIO(pdf_bytes)).pages)
-                if n_pages < 14:
+                if n_pages != 20:
                     st.error(
-                        f"❌ Le PDF du dépôt n'a que {n_pages} pages.\n\n"
-                        f"Il faut déposer la version complète (35 pages) sur GitHub.\n"
+                        f"❌ Le PDF du dépôt a {n_pages} pages — attendu : exactement 20.\n\n"
+                        f"Assurez-vous que le fichier bundlé est bien "
+                        f"**la version 20-pages** du livret (pas l'ancienne version 35 pages).\n"
                         f"Fichier attendu : {PDF_FILE}"
                     )
                     st.stop()
