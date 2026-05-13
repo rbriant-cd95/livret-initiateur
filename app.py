@@ -473,6 +473,35 @@ if excel_file:
                     st.stop()
 
                 excel_bytes = excel_file.read()
+
+                # --- Diagnostic : lecture seule pour inspecter les données ---
+                m1_d, m2_d, m3_d = read_excel(excel_bytes)
+                n_ep_d     = max(1, math.ceil(len(m1_d) / 3))
+                extra_ep_d = max(0, n_ep_d - EP_PAGES_IN_PDF)
+                fd = build_fields(m1_d, m2_d, m3_d, extra_ep_d)
+                from collections import Counter
+                page_count = Counter(f["page_number"] for f in fd["form_fields"])
+
+                with st.expander("🔍 Diagnostic — affectation des pages (cliquez pour vérifier)", expanded=True):
+                    st.markdown(f"**Sessions lues :** {len(m1_d)} EP · {len(m2_d)} M2 · {len(m3_d)} M3")
+                    st.markdown(f"**extra_ep :** {extra_ep_d}  |  **PDF de sortie :** {n_pages + extra_ep_d} pages")
+                    st.markdown("**Annotations par page :**")
+                    ep_pages  = list(range(5, 5 + n_ep_d))
+                    m2_start  = M2_FIRST + extra_ep_d
+                    m3_pg     = M3_PAGE  + extra_ep_d
+                    for pg in sorted(page_count):
+                        n = page_count[pg]
+                        if pg in ep_pages:
+                            tag = "📘 EP"
+                        elif m2_start <= pg < m2_start + math.ceil(max(len(m2_d),1) / 3):
+                            tag = "📗 M2"
+                        elif pg == m3_pg:
+                            tag = "📙 M3"
+                        else:
+                            tag = "❓ INCONNU"
+                        st.markdown(f"  - Page **{pg}** → {n} annotations  {tag}")
+
+                # --- Génération réelle ---
                 pdf_out, count, nm1, nm2, nm3, extra_ep = generate(excel_bytes, pdf_bytes)
 
                 msg = f"✅ Livret généré — {count} annotations  ({nm1} séances EP, {nm2} M2, {nm3} M3)"
