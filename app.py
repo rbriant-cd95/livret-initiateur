@@ -10,13 +10,13 @@ Adaptations Streamlit uniquement :
   - PDF   : bundle dans le depot (lu via open)
   - Sortie: download_button (bytes en memoire)
 
-Structure PDF attendue (35 pages) :
+Structure PDF attendue (20 pages) :
   Pages  5-23 : tableaux Enseignement pratique  (3 seances/page)
   Page     24 : validation EP
   Pages 25-27 : tableaux Organiser l'activite   (3 seances/page)
   Page     28 : validation M2
   Page     29 : tableau Organiser un cursus     (2 sous-tableaux)
-  Pages 30-35 : attestations, tuteur, module complementaire, contacts
+  Pages 15-20 : attestations, tuteur, module complementaire, contacts
 """
 
 import io
@@ -63,13 +63,13 @@ Q_MAP = {'left': 0, 'center': 1, 'right': 2}
 # ------ Structure du PDF (pages 1-indexées) ----------------
 # Adaptez si vous utilisez une version du livret avec un nombre différent de pages.
 EP_FIRST          =  5    # première page tableau EP
-EP_PAGES_IN_PDF   = 19    # nombre de pages EP dans le PDF de base (pages 5-23)
-EP_VALID          = 24    # page de validation EP
-M2_FIRST          = 25    # première page tableau M2
-M2_PAGES_IN_PDF   =  3    # nombre de pages M2 dans le PDF de base (pages 25-27)
-M2_VALID          = 28    # page de validation M2
-M3_PAGE           = 29    # page tableau M3
-REMAINING_START   = 30    # première page "restante" (attestations, contacts…)
+EP_PAGES_IN_PDF   =  4    # nombre de pages EP dans le PDF de base (pages 5-8)
+EP_VALID          =  9    # page de validation EP
+M2_FIRST          = 10    # première page tableau M2
+M2_PAGES_IN_PDF   =  3    # nombre de pages M2 dans le PDF de base (pages 10-12)
+M2_VALID          = 13    # page de validation M2
+M3_PAGE           = 14    # page tableau M3
+REMAINING_START   = 15    # première page "restante" (attestations, contacts…)
 
 # ------ Utilitaires ----------------------------------------
 
@@ -465,8 +465,8 @@ if excel_file:
                     st.stop()
 
                 n_pages = len(PdfReader(io.BytesIO(pdf_bytes)).pages)
-                if n_pages != 35:
-                    st.error(f"❌ Le PDF du dépôt a {n_pages} pages — attendu : 35.\n\n"
+                if n_pages != 20:
+                    st.error(f"❌ Le PDF du dépôt a {n_pages} pages — attendu : 20.\n\n"
                              f"Fichier attendu : {PDF_FILE}")
                     st.stop()
 
