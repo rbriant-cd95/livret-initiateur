@@ -128,8 +128,8 @@ def estimate_lines(text, font_size_pts, cell_width_px, chars_per_pt=0.55):
 
 # ------ Lecture Excel --------------------------------------
 
-def read_excel(path):
-    wb = openpyxl.load_workbook(path)
+def read_excel(file_bytes):
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes))
     ws = wb.active
 
     def row(i):
